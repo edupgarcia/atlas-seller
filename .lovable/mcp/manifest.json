@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "sdk_version": "0.26.1",
+  "path": "/mcp",
+  "auth": {
+    "type": "oauth",
+    "issuer": "https://omvtqftgbkdthgfypjlx.supabase.co/auth/v1",
+    "accepted_audiences": [
+      "authenticated"
+    ]
+  },
+  "mcp": {
+    "server": {
+      "name": "atlas-seller",
+      "version": "0.1.0",
+      "title": "Atlas Seller"
+    },
+    "tools": [
+      {
+        "name": "get_my_account",
+        "title": "Minha conta",
+        "description": "Retorna o perfil do seller autenticado no Atlas Seller e se a conta Amazon está conectada.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {}
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_sales_summary",
+        "title": "Resumo de vendas e lucro",
+        "description": "KPIs consolidados (receita, lucro bruto, margem, pedidos, ticket médio) do seller no período informado, com quebra por canal FBA/DBA.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "description": "Data inicial ISO (ex.: 2026-01-01)."
+            },
+            "to": {
+              "type": "string",
+              "description": "Data final ISO (ex.: 2026-01-31)."
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_orders",
+        "title": "Listar pedidos",
+        "description": "Lista os pedidos do seller no período, com SKU, quantidade, receita líquida e lucro bruto por item.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "description": "Data inicial ISO."
+            },
+            "to": {
+              "type": "string",
+              "description": "Data final ISO."
+            },
+            "seller_sku": {
+              "description": "Filtrar por um SKU específico.",
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "default": 50,
+              "description": "Máximo de linhas.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_sku_costs",
+        "title": "Custos por SKU",
+        "description": "Lista os SKUs do seller e o custo de produto cadastrado para cada um.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {}
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "set_sku_cost",
+        "title": "Atualizar custo de um SKU",
+        "description": "Grava o custo de produto (cost_product) de um SKU do seller, usado no cálculo de lucro bruto.",
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "seller_sku": {
+              "type": "string",
+              "minLength": 1,
+              "description": "SKU do seller."
+            },
+            "cost_product": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Novo custo unitário do produto, em BRL."
+            }
+          },
+          "required": [
+            "seller_sku",
+            "cost_product"
+          ]
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}
