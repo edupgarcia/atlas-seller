@@ -1,0 +1,1841 @@
+kind,name,definition
+CONSTRAINT,account_sku_costs,"account_sku_costs_cost_product_check CHECK ((cost_product >= (0)::numeric)),
+account_sku_costs_pkey PRIMARY KEY (account_id, seller_sku)"
+CONSTRAINT,amazon_orders_raw,"amazon_orders_raw_pkey PRIMARY KEY (id),
+amazon_orders_raw_api_source_id_fkey FOREIGN KEY (api_source_id) REFERENCES api_sources(id)"
+CONSTRAINT,api_sources,"api_sources_pkey PRIMARY KEY (id),
+api_sources_service_version_key UNIQUE (service, version)"
+CONSTRAINT,app_config,app_config_pkey PRIMARY KEY (key)
+CONSTRAINT,bling_accounts,"bling_accounts_pkey PRIMARY KEY (id),
+bling_accounts_seller_id_key UNIQUE (seller_id),
+bling_accounts_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES sellers(id) ON DELETE CASCADE"
+CONSTRAINT,bridge_seller_sku_identifier,"bridge_seller_sku_identifier_pkey PRIMARY KEY (id),
+uq_identifier UNIQUE (marketplace, identifier_type, identifier_value),
+fk_bridge_seller_sku_identifier_sku FOREIGN KEY (seller_sku_id) REFERENCES dim_seller_sku(id),
+fk_bridge_sku FOREIGN KEY (seller_sku_id) REFERENCES dim_seller_sku(id)"
+CONSTRAINT,dim_date,dim_date_pkey PRIMARY KEY (date_key)
+CONSTRAINT,dim_financial_category,"dim_financial_category_pkey PRIMARY KEY (id),
+uq_financial_mapping UNIQUE (api_event_type, api_charge_type)"
+CONSTRAINT,dim_seller_sku,"dim_seller_sku_pkey PRIMARY KEY (id),
+dim_seller_sku_sku_account_key UNIQUE (seller_sku, marketplace_account_id),
+uq_dim_seller_sku UNIQUE (marketplace_account_id, seller_sku, asin)"
+CONSTRAINT,fact_financial_transaction,"fact_financial_transaction_pkey PRIMARY KEY (id),
+uq_fact_financial_transaction_event UNIQUE (financial_event_id),
+uq_financial_event UNIQUE (financial_event_id),
+fk_fact_financial_transaction_category FOREIGN KEY (financial_category_id) REFERENCES dim_financial_category(id),
+fk_fact_financial_transaction_date FOREIGN KEY (transaction_date_key) REFERENCES dim_date(date_key),
+fk_fact_financial_transaction_sku FOREIGN KEY (seller_sku_id) REFERENCES dim_seller_sku(id)"
+CONSTRAINT,fact_order,"fact_order_pkey PRIMARY KEY (id),
+uq_fact_order_amazon_order UNIQUE (amazon_order_id),
+fact_order_account_id_fkey FOREIGN KEY (account_id) REFERENCES marketplace_accounts(id),
+fk_fact_order_date FOREIGN KEY (order_date) REFERENCES dim_date(date_key)"
+CONSTRAINT,fact_order_item,"fact_order_item_pkey PRIMARY KEY (id),
+uq_fact_order_item UNIQUE (amazon_order_id, order_item_id),
+uq_fact_order_item_amazon UNIQUE (amazon_order_id, order_item_id),
+fact_order_item_account_id_fkey FOREIGN KEY (account_id) REFERENCES marketplace_accounts(id),
+fk_fact_order_item_order FOREIGN KEY (order_id) REFERENCES fact_order(id),
+fk_fact_order_item_seller_sku FOREIGN KEY (seller_sku_id) REFERENCES dim_seller_sku(id)"
+CONSTRAINT,financial_checkpoint,financial_checkpoint_pkey PRIMARY KEY (id)
+CONSTRAINT,financial_events,"financial_events_pkey PRIMARY KEY (id),
+uq_financial_events UNIQUE (amazon_order_id, posted_date, event_type, charge_or_fee_type),
+financial_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES marketplace_accounts(id)"
+CONSTRAINT,integration_sources,"integration_sources_pkey PRIMARY KEY (id),
+integration_sources_provider_service_version_key UNIQUE (provider, service, version)"
+CONSTRAINT,login_attempts,login_attempts_pkey PRIMARY KEY (key)
+CONSTRAINT,marketplace_accounts,"marketplace_accounts_amazon_seller_id_key UNIQUE (amazon_seller_id),
+marketplace_accounts_pkey PRIMARY KEY (id),
+marketplace_accounts_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES sellers(id) ON DELETE CASCADE,
+marketplace_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)"
+CONSTRAINT,marketplace_fee_estimates,"marketplace_fee_estimates_pkey PRIMARY KEY (id),
+marketplace_fee_estimates_seller_sku_marketplace_id_listing_key UNIQUE (seller_sku, marketplace_id, listing_price, is_fba)"
+CONSTRAINT,ml_accounts,"ml_accounts_pkey PRIMARY KEY (id),
+ml_accounts_user_id_ml_user_id_key UNIQUE (user_id, ml_user_id),
+ml_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+CONSTRAINT,ml_oauth_states,"ml_oauth_states_pkey PRIMARY KEY (state),
+ml_oauth_states_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE"
+CONSTRAINT,orders_amazon,"orders_amazon_order_item_id_key UNIQUE (order_item_id),
+orders_amazon_pkey PRIMARY KEY (id)"
+CONSTRAINT,orders_checkpoint,orders_checkpoint_pkey PRIMARY KEY (id)
+CONSTRAINT,sellers,sellers_pkey PRIMARY KEY (id)
+CONSTRAINT,stg_financial_transactions_amazon,stg_financial_transactions_amazon_pkey PRIMARY KEY (id)
+CONSTRAINT,stg_order_items_amazon,stg_order_items_amazon_pkey PRIMARY KEY (id)
+CONSTRAINT,stg_order_items_mercadolivre,"stg_order_items_mercadolivre_pkey PRIMARY KEY (ml_account_id, order_id, item_id, variation_id),
+stg_order_items_mercadolivre_ml_account_id_fkey FOREIGN KEY (ml_account_id) REFERENCES ml_accounts(id) ON DELETE CASCADE"
+CONSTRAINT,stg_orders_amazon,"stg_orders_amazon_pkey PRIMARY KEY (id),
+uq_stg_orders_amazon_order_id UNIQUE (amazon_order_id)"
+CONSTRAINT,stg_orders_mercadolivre,"stg_orders_mercadolivre_pkey PRIMARY KEY (ml_account_id, order_id),
+stg_orders_mercadolivre_ml_account_id_fkey FOREIGN KEY (ml_account_id) REFERENCES ml_accounts(id) ON DELETE CASCADE"
+CONSTRAINT,sync_checkpoint,sync_checkpoint_pkey PRIMARY KEY (source)
+CONSTRAINT,sync_checkpoint_orders,"sync_checkpoint_orders_pkey PRIMARY KEY (account_id, marketplace_provider),
+sync_checkpoint_orders_account_id_fkey FOREIGN KEY (account_id) REFERENCES marketplace_accounts(id)"
+CONSTRAINT,sync_execution,sync_execution_pkey PRIMARY KEY (id)
+FUNCTION,fn_protect_cost_product,"CREATE OR REPLACE FUNCTION public.fn_protect_cost_product()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.cost_product IS NULL THEN
+    NEW.cost_product := OLD.cost_product;  -- NULL não apaga custo existente
+  END IF;
+
+  NEW.cost_status := CASE WHEN COALESCE(NEW.cost_product,0) > 0
+                          THEN 'ok' ELSE 'missing' END;
+  RETURN NEW;
+END;
+$function$
+"
+FUNCTION,get_max_created_after,"CREATE OR REPLACE FUNCTION public.get_max_created_after()
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  max_date TIMESTAMPTZ;
+BEGIN
+  SELECT MAX(created_time) INTO max_date FROM orders_amazon;
+  IF max_date IS NULL THEN
+    RETURN NULL;
+  END IF;
+  RETURN to_char(max_date - interval '1 day', 'YYYY-MM-DD') || 'T00:00:00Z';
+END;
+$function$
+"
+FUNCTION,get_pending_fee_estimates,"CREATE OR REPLACE FUNCTION public.get_pending_fee_estimates()
+ RETURNS TABLE(seller_sku text, listing_price numeric)
+ LANGUAGE sql
+AS $function$
+  SELECT DISTINCT dss.seller_sku::text, foi.item_price_amount::numeric
+  FROM fact_order_item foi
+  LEFT JOIN dim_seller_sku dss ON foi.seller_sku_id = dss.id
+  WHERE dss.seller_sku IS NOT NULL
+    AND foi.item_price_amount IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM marketplace_fee_estimates mfe
+      WHERE mfe.seller_sku = dss.seller_sku
+        AND mfe.listing_price = foi.item_price_amount
+        AND mfe.status = 'success'
+    );
+$function$
+"
+FUNCTION,is_login_blocked,"CREATE OR REPLACE FUNCTION public.is_login_blocked(p_key text, p_max integer, p_window_seconds integer)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1 from public.login_attempts
+    where key = p_key
+      and failures >= p_max
+      and window_start >= now() - make_interval(secs => p_window_seconds)
+  );
+$function$
+"
+FUNCTION,load_fact_order,"CREATE OR REPLACE FUNCTION public.load_fact_order()
+ RETURNS integer
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    rows_processed INTEGER;
+BEGIN
+
+    INSERT INTO fact_order
+    (
+        amazon_order_id,
+        marketplace_id,
+
+        purchase_date,
+        order_date,
+        last_update_date,
+
+        order_status,
+
+        fulfillment_channel,
+        sales_channel,
+
+        order_total_amount,
+        order_total_currency,
+
+        number_of_items_shipped,
+        number_of_items_unshipped,
+
+        is_business_order,
+
+        source_system,
+        source_created_at,
+
+        created_at,
+        updated_at
+    )
+
+    SELECT
+
+        amazon_order_id,
+        marketplace_id,
+
+        purchase_date,
+        purchase_date::DATE,
+        last_update_date,
+
+        order_status,
+
+        fulfillment_channel,
+        sales_channel,
+
+        order_total_amount,
+        order_total_currency,
+
+        number_of_items_shipped,
+        number_of_items_unshipped,
+
+        is_business_order,
+
+        'AMAZON_SP_API',
+        extraction_date,
+
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+
+    FROM stg_orders_amazon
+
+    WHERE processed = FALSE
+
+
+    ON CONFLICT (amazon_order_id)
+
+    DO UPDATE SET
+
+        order_status = EXCLUDED.order_status,
+
+        last_update_date = EXCLUDED.last_update_date,
+
+        fulfillment_channel =
+            EXCLUDED.fulfillment_channel,
+
+        sales_channel =
+            EXCLUDED.sales_channel,
+
+        order_total_amount =
+            EXCLUDED.order_total_amount,
+
+        order_total_currency =
+            EXCLUDED.order_total_currency,
+
+        number_of_items_shipped =
+            EXCLUDED.number_of_items_shipped,
+
+        number_of_items_unshipped =
+            EXCLUDED.number_of_items_unshipped,
+
+        is_business_order =
+            EXCLUDED.is_business_order,
+
+        updated_at = CURRENT_TIMESTAMP;
+
+
+    GET DIAGNOSTICS rows_processed = ROW_COUNT;
+
+
+    UPDATE stg_orders_amazon
+
+    SET
+        processed = TRUE,
+        processed_date = CURRENT_TIMESTAMP
+
+    WHERE processed = FALSE;
+
+
+    RETURN rows_processed;
+
+END;
+$function$
+"
+FUNCTION,load_fact_order_item,"CREATE OR REPLACE FUNCTION public.load_fact_order_item()
+ RETURNS integer
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    rows_processed INTEGER;
+BEGIN
+
+    INSERT INTO fact_order_item
+    (
+        order_id,
+        amazon_order_id,
+        order_item_id,
+
+        seller_sku_id,
+
+        asin,
+        seller_sku,
+        item_title,
+
+        quantity_ordered,
+
+        item_price_amount,
+        item_tax_amount,
+        promotion_discount_amount,
+
+        item_revenue,
+
+        currency,
+
+        fulfillment_channel,
+
+        source_system,
+
+        created_at,
+        updated_at
+    )
+
+    SELECT
+        fo.id,
+
+        s.amazon_order_id,
+        s.order_item_id,
+
+        NULL,
+
+        s.asin,
+        s.seller_sku,
+        s.title,
+
+        s.quantity_ordered,
+
+        s.item_price_amount,
+        s.item_tax_amount,
+        s.promotion_discount_amount,
+
+        COALESCE(s.item_price_amount, 0)
+        + COALESCE(s.item_tax_amount, 0)
+        - COALESCE(s.promotion_discount_amount, 0),
+
+        s.item_price_currency,
+
+        s.fulfillment_channel,
+
+        'AMAZON_SP_API',
+
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+
+    FROM stg_order_items_amazon s
+
+    INNER JOIN fact_order fo
+        ON fo.amazon_order_id = s.amazon_order_id
+
+    WHERE s.processed = FALSE
+      AND s.order_item_id IS NOT NULL
+      AND s.order_item_id <> s.amazon_order_id
+      AND NULLIF(TRIM(s.seller_sku), '') IS NOT NULL
+
+    ON CONFLICT
+    (
+        amazon_order_id,
+        order_item_id
+    )
+
+    DO UPDATE SET
+
+        seller_sku = EXCLUDED.seller_sku,
+
+        item_title = EXCLUDED.item_title,
+
+        quantity_ordered = EXCLUDED.quantity_ordered,
+
+        item_price_amount = EXCLUDED.item_price_amount,
+
+        item_tax_amount = EXCLUDED.item_tax_amount,
+
+        promotion_discount_amount = EXCLUDED.promotion_discount_amount,
+
+        item_revenue = EXCLUDED.item_revenue,
+
+        updated_at = CURRENT_TIMESTAMP;
+
+
+    GET DIAGNOSTICS rows_processed = ROW_COUNT;
+
+
+    UPDATE stg_order_items_amazon
+
+    SET
+        processed = TRUE,
+        processed_date = CURRENT_TIMESTAMP
+
+    WHERE processed = FALSE;
+
+
+    RETURN rows_processed;
+
+END;
+$function$
+"
+FUNCTION,register_login_failure,"CREATE OR REPLACE FUNCTION public.register_login_failure(p_key text, p_window_seconds integer)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare v integer;
+begin
+  insert into public.login_attempts as la (key, failures, window_start)
+  values (p_key, 1, now())
+  on conflict (key) do update
+    set failures = case when la.window_start < now() - make_interval(secs => p_window_seconds)
+                        then 1 else la.failures + 1 end,
+        window_start = case when la.window_start < now() - make_interval(secs => p_window_seconds)
+                            then now() else la.window_start end
+  returning failures into v;
+  return v;
+end $function$
+"
+FUNCTION,reprocess_costs,"CREATE OR REPLACE FUNCTION public.reprocess_costs(p_sku text, p_from timestamp with time zone, p_to timestamp with time zone, p_account_id uuid DEFAULT NULL::uuid)
+ RETURNS TABLE(sku text, orders_updated bigint, cost_before numeric, cost_after numeric)
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v_sku_id BIGINT;
+  v_cost_atual NUMERIC;
+BEGIN
+  -- Busca o registro canônico do SKU (prioriza o da conta informada, depois qualquer um com conta)
+  SELECT d.id, d.cost_product INTO v_sku_id, v_cost_atual
+  FROM dim_seller_sku d
+  WHERE d.seller_sku = p_sku
+    AND (p_account_id IS NULL OR d.marketplace_account_id = p_account_id)
+  ORDER BY d.marketplace_account_id NULLS LAST, d.id DESC
+  LIMIT 1;
+
+  IF NOT FOUND OR v_sku_id IS NULL THEN
+    RETURN QUERY SELECT p_sku, 0::BIGINT, 0::NUMERIC, 0::NUMERIC;
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  WITH updated AS (
+    UPDATE fact_order_item foi
+    SET cost_product = v_cost_atual,
+        cost_status = 'ok',
+        updated_at = now()
+    FROM fact_order fo
+    WHERE foi.amazon_order_id::text = fo.amazon_order_id::text
+      AND foi.seller_sku_id = v_sku_id
+      AND fo.purchase_date >= p_from
+      AND fo.purchase_date < (p_to + INTERVAL '1 day')
+      AND (foi.cost_product IS DISTINCT FROM v_cost_atual OR foi.cost_status IS DISTINCT FROM 'ok')
+    RETURNING foi.cost_product AS novo_custo
+  )
+  SELECT p_sku, COUNT(*)::BIGINT, v_cost_atual, v_cost_atual
+  FROM updated;
+END;
+$function$
+"
+FUNCTION,trigger_estimate_fees,"CREATE OR REPLACE FUNCTION public.trigger_estimate_fees()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  v_anon_key TEXT;
+BEGIN
+  -- Pega a chave da tabela de config
+  SELECT value INTO v_anon_key
+  FROM app_config
+  WHERE key = 'supabase_anon_key';
+
+  IF v_anon_key IS NULL THEN
+    RAISE WARNING 'app_config.supabase_anon_key não configurada';
+    RETURN NEW;
+  END IF;
+
+  -- Chamada assíncrona para a Edge Function (fire-and-forget)
+  PERFORM net.http_post(
+    url := 'https://omvtqftgbkdthgfypjlx.supabase.co/functions/v1/amazon-orders-fee-estimated',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || v_anon_key,
+      'Content-Type', 'application/json'
+    ),
+    body := jsonb_build_object('amazon_order_id', NEW.amazon_order_id)
+  );
+
+  RETURN NEW;
+END;
+$function$
+"
+FUNCTION,upsert_orders_batch,"CREATE OR REPLACE FUNCTION public.upsert_orders_batch(p_orders jsonb)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  inserted INTEGER := 0;
+  item JSONB;
+BEGIN
+  FOR item IN SELECT * FROM jsonb_array_elements(p_orders)
+  LOOP
+    INSERT INTO orders_amazon (
+      order_id, created_time, last_updated_time, programs, marketplace_id,
+      marketplace_name, channel_name, condition, amount, currency_code,
+      asin, seller_sku, title, order_item_id, quantity_ordered,
+      alias_id, alias_type, fulfillment_channel, canal_logistica
+    ) VALUES (
+      item->>'order_id',
+      NULLIF(item->>'created_time', '')::TIMESTAMPTZ,
+      NULLIF(item->>'last_updated_time', '')::TIMESTAMPTZ,
+      item->>'programs',
+      item->>'marketplace_id',
+      item->>'marketplace_name',
+      item->>'channel_name',
+      item->>'condition',
+      (item->>'amount')::NUMERIC,
+      item->>'currency_code',
+      item->>'asin',
+      item->>'seller_sku',
+      item->>'title',
+      item->>'order_item_id',
+      (item->>'quantity_ordered')::INTEGER,
+      item->>'alias_id',
+      item->>'alias_type',
+      item->>'fulfillment_channel',
+      item->>'canal_logistica'
+    )
+    ON CONFLICT (order_item_id) DO UPDATE SET
+      order_id = EXCLUDED.order_id,
+      created_time = EXCLUDED.created_time,
+      last_updated_time = EXCLUDED.last_updated_time,
+      programs = EXCLUDED.programs,
+      marketplace_id = EXCLUDED.marketplace_id,
+      marketplace_name = EXCLUDED.marketplace_name,
+      channel_name = EXCLUDED.channel_name,
+      condition = EXCLUDED.condition,
+      amount = EXCLUDED.amount,
+      currency_code = EXCLUDED.currency_code,
+      asin = EXCLUDED.asin,
+      seller_sku = EXCLUDED.seller_sku,
+      title = EXCLUDED.title,
+      quantity_ordered = EXCLUDED.quantity_ordered,
+      alias_id = EXCLUDED.alias_id,
+      alias_type = EXCLUDED.alias_type,
+      fulfillment_channel = EXCLUDED.fulfillment_channel,
+      canal_logistica = EXCLUDED.canal_logistica;
+
+    inserted := inserted + 1;
+  END LOOP;
+  RETURN inserted;
+END;
+$function$
+"
+INDEX,account_sku_costs,"CREATE UNIQUE INDEX account_sku_costs_pkey ON public.account_sku_costs USING btree (account_id, seller_sku)"
+INDEX,amazon_orders_raw,"CREATE INDEX ix_raw_processed ON public.amazon_orders_raw USING btree (processed);
+CREATE INDEX ix_raw_received ON public.amazon_orders_raw USING btree (received_at);
+CREATE UNIQUE INDEX ux_raw_account_order ON public.amazon_orders_raw USING btree (account_id, amazon_order_id);
+CREATE INDEX ix_raw_last_update ON public.amazon_orders_raw USING btree (last_update_date);
+CREATE UNIQUE INDEX amazon_orders_raw_pkey ON public.amazon_orders_raw USING btree (id)"
+INDEX,api_sources,"CREATE UNIQUE INDEX api_sources_service_version_key ON public.api_sources USING btree (service, version);
+CREATE UNIQUE INDEX api_sources_pkey ON public.api_sources USING btree (id)"
+INDEX,app_config,CREATE UNIQUE INDEX app_config_pkey ON public.app_config USING btree (key)
+INDEX,bling_accounts,"CREATE UNIQUE INDEX bling_accounts_pkey ON public.bling_accounts USING btree (id);
+CREATE UNIQUE INDEX bling_accounts_seller_id_key ON public.bling_accounts USING btree (seller_id)"
+INDEX,bridge_seller_sku_identifier,"CREATE INDEX ix_bridge_sku_identifier_lookup ON public.bridge_seller_sku_identifier USING btree (identifier_value);
+CREATE UNIQUE INDEX bridge_seller_sku_identifier_pkey ON public.bridge_seller_sku_identifier USING btree (id);
+CREATE UNIQUE INDEX uq_identifier ON public.bridge_seller_sku_identifier USING btree (marketplace, identifier_type, identifier_value);
+CREATE INDEX ix_bridge_identifier_lookup ON public.bridge_seller_sku_identifier USING btree (identifier_value);
+CREATE INDEX ix_bridge_seller_sku_id ON public.bridge_seller_sku_identifier USING btree (seller_sku_id);
+CREATE INDEX ix_bridge_sku_identifier_sku ON public.bridge_seller_sku_identifier USING btree (seller_sku_id);
+CREATE UNIQUE INDEX ux_bridge_identifier ON public.bridge_seller_sku_identifier USING btree (marketplace, identifier_type, identifier_value)"
+INDEX,dim_date,CREATE UNIQUE INDEX dim_date_pkey ON public.dim_date USING btree (date_key)
+INDEX,dim_financial_category,"CREATE UNIQUE INDEX uq_financial_mapping ON public.dim_financial_category USING btree (api_event_type, api_charge_type);
+CREATE UNIQUE INDEX dim_financial_category_pkey ON public.dim_financial_category USING btree (id)"
+INDEX,dim_seller_sku,"CREATE INDEX idx_dim_seller_sku_asin ON public.dim_seller_sku USING btree (asin);
+CREATE UNIQUE INDEX uq_dim_seller_sku ON public.dim_seller_sku USING btree (marketplace_account_id, seller_sku, asin);
+CREATE UNIQUE INDEX uq_dim_seller_sku_account ON public.dim_seller_sku USING btree (seller_sku, marketplace_account_id);
+CREATE UNIQUE INDEX dim_seller_sku_pkey ON public.dim_seller_sku USING btree (id);
+CREATE UNIQUE INDEX dim_seller_sku_sku_account_key ON public.dim_seller_sku USING btree (seller_sku, marketplace_account_id);
+CREATE INDEX idx_dim_seller_sku_status ON public.dim_seller_sku USING btree (status);
+CREATE INDEX idx_dim_seller_sku_category ON public.dim_seller_sku USING btree (category)"
+INDEX,fact_financial_transaction,"CREATE INDEX ix_fact_financial_transaction_category ON public.fact_financial_transaction USING btree (financial_category_id);
+CREATE UNIQUE INDEX fact_financial_transaction_pkey ON public.fact_financial_transaction USING btree (id);
+CREATE UNIQUE INDEX uq_fact_financial_transaction_event ON public.fact_financial_transaction USING btree (financial_event_id);
+CREATE UNIQUE INDEX uq_financial_event ON public.fact_financial_transaction USING btree (financial_event_id);
+CREATE INDEX idx_fact_financial_transaction_sku ON public.fact_financial_transaction USING btree (seller_sku_id);
+CREATE INDEX idx_fact_financial_transaction_type ON public.fact_financial_transaction USING btree (event_type, charge_or_fee_type);
+CREATE INDEX idx_fact_financial_transaction_category ON public.fact_financial_transaction USING btree (financial_category_id);
+CREATE INDEX idx_fact_financial_transaction_date ON public.fact_financial_transaction USING btree (transaction_date);
+CREATE INDEX idx_fact_financial_transaction_order ON public.fact_financial_transaction USING btree (amazon_order_id);
+CREATE INDEX ix_fact_financial_transaction_category_id ON public.fact_financial_transaction USING btree (financial_category_id);
+CREATE INDEX ix_fact_financial_transaction_sku ON public.fact_financial_transaction USING btree (seller_sku_id);
+CREATE INDEX ix_fact_financial_transaction_sku_id ON public.fact_financial_transaction USING btree (seller_sku_id)"
+INDEX,fact_order,"CREATE INDEX idx_fact_order_order_date ON public.fact_order USING btree (order_date);
+CREATE INDEX idx_fact_order_purchase_date ON public.fact_order USING btree (purchase_date);
+CREATE INDEX idx_fact_order_status ON public.fact_order USING btree (order_status);
+CREATE UNIQUE INDEX uq_fact_order_amazon_order ON public.fact_order USING btree (amazon_order_id);
+CREATE UNIQUE INDEX fact_order_pkey ON public.fact_order USING btree (id);
+CREATE INDEX idx_fact_order_account ON public.fact_order USING btree (account_id);
+CREATE INDEX idx_fact_order_marketplace ON public.fact_order USING btree (marketplace_id);
+CREATE INDEX ix_fact_order_order_date ON public.fact_order USING btree (order_date)"
+INDEX,fact_order_item,"CREATE INDEX idx_fact_order_item_account ON public.fact_order_item USING btree (account_id);
+CREATE UNIQUE INDEX uq_fact_order_item ON public.fact_order_item USING btree (amazon_order_id, order_item_id);
+CREATE UNIQUE INDEX fact_order_item_pkey ON public.fact_order_item USING btree (id);
+CREATE UNIQUE INDEX uq_fact_order_item_amazon ON public.fact_order_item USING btree (amazon_order_id, order_item_id);
+CREATE UNIQUE INDEX uq_fact_order_item_order_item ON public.fact_order_item USING btree (amazon_order_id, order_item_id);
+CREATE INDEX ix_fact_order_item_seller_sku_id ON public.fact_order_item USING btree (seller_sku_id);
+CREATE INDEX ix_fact_order_item_order_item ON public.fact_order_item USING btree (order_item_id);
+CREATE INDEX ix_fact_order_item_order_id ON public.fact_order_item USING btree (order_id);
+CREATE INDEX idx_fact_order_item_seller_sku_id ON public.fact_order_item USING btree (seller_sku_id);
+CREATE INDEX idx_fact_order_item_order ON public.fact_order_item USING btree (order_id);
+CREATE INDEX idx_fact_order_item_amazon_order ON public.fact_order_item USING btree (amazon_order_id)"
+INDEX,financial_checkpoint,CREATE UNIQUE INDEX financial_checkpoint_pkey ON public.financial_checkpoint USING btree (id)
+INDEX,financial_events,"CREATE UNIQUE INDEX uniq_financial_events_dedup ON public.financial_events USING btree (amazon_order_id, COALESCE(seller_sku, ''::text), event_type, charge_or_fee_type, amount);
+CREATE UNIQUE INDEX financial_events_pkey ON public.financial_events USING btree (id);
+CREATE INDEX idx_financial_events_account ON public.financial_events USING btree (account_id);
+CREATE UNIQUE INDEX uq_financial_events ON public.financial_events USING btree (amazon_order_id, posted_date, event_type, charge_or_fee_type);
+CREATE UNIQUE INDEX idx_financial_events_unique ON public.financial_events USING btree (amazon_order_id, posted_date, event_type, charge_or_fee_type);
+CREATE INDEX idx_financial_events_type ON public.financial_events USING btree (event_type, charge_or_fee_type);
+CREATE INDEX idx_financial_events_order ON public.financial_events USING btree (amazon_order_id);
+CREATE INDEX idx_financial_events_date ON public.financial_events USING btree (posted_date)"
+INDEX,integration_sources,"CREATE UNIQUE INDEX integration_sources_provider_service_version_key ON public.integration_sources USING btree (provider, service, version);
+CREATE UNIQUE INDEX integration_sources_pkey ON public.integration_sources USING btree (id)"
+INDEX,login_attempts,CREATE UNIQUE INDEX login_attempts_pkey ON public.login_attempts USING btree (key)
+INDEX,marketplace_accounts,"CREATE INDEX marketplace_accounts_seller_id_idx ON public.marketplace_accounts USING btree (seller_id);
+CREATE UNIQUE INDEX marketplace_accounts_amazon_seller_id_key ON public.marketplace_accounts USING btree (amazon_seller_id);
+CREATE UNIQUE INDEX marketplace_accounts_pkey ON public.marketplace_accounts USING btree (id);
+CREATE UNIQUE INDEX marketplace_accounts_provider_merchant_key ON public.marketplace_accounts USING btree (marketplace_provider, merchant_id) WHERE (merchant_id IS NOT NULL)"
+INDEX,marketplace_fee_estimates,"CREATE INDEX idx_fee_est_lookup ON public.marketplace_fee_estimates USING btree (seller_sku, listing_price, is_fba);
+CREATE INDEX idx_fee_est_sku ON public.marketplace_fee_estimates USING btree (seller_sku);
+CREATE UNIQUE INDEX marketplace_fee_estimates_pkey ON public.marketplace_fee_estimates USING btree (id);
+CREATE UNIQUE INDEX marketplace_fee_estimates_seller_sku_marketplace_id_listing_key ON public.marketplace_fee_estimates USING btree (seller_sku, marketplace_id, listing_price, is_fba)"
+INDEX,ml_accounts,"CREATE UNIQUE INDEX ml_accounts_user_id_ml_user_id_key ON public.ml_accounts USING btree (user_id, ml_user_id);
+CREATE UNIQUE INDEX ml_accounts_pkey ON public.ml_accounts USING btree (id)"
+INDEX,ml_oauth_states,CREATE UNIQUE INDEX ml_oauth_states_pkey ON public.ml_oauth_states USING btree (state)
+INDEX,orders_amazon,"CREATE INDEX idx_orders_created_time ON public.orders_amazon USING btree (created_time);
+CREATE UNIQUE INDEX orders_amazon_order_item_id_key ON public.orders_amazon USING btree (order_item_id);
+CREATE INDEX idx_orders_order_item_id ON public.orders_amazon USING btree (order_item_id);
+CREATE UNIQUE INDEX orders_amazon_pkey ON public.orders_amazon USING btree (id);
+CREATE INDEX idx_orders_canal ON public.orders_amazon USING btree (canal_logistica);
+CREATE UNIQUE INDEX idx_orders_amazon_item_id ON public.orders_amazon USING btree (order_item_id)"
+INDEX,orders_checkpoint,CREATE UNIQUE INDEX orders_checkpoint_pkey ON public.orders_checkpoint USING btree (id)
+INDEX,sellers,CREATE UNIQUE INDEX sellers_pkey ON public.sellers USING btree (id)
+INDEX,stg_financial_transactions_amazon,"CREATE INDEX ix_stg_financial_transaction_event_date ON public.stg_financial_transactions_amazon USING btree (event_date);
+CREATE UNIQUE INDEX ux_stg_financial_transaction_event ON public.stg_financial_transactions_amazon USING btree (financial_event_id);
+CREATE INDEX ix_stg_financial_transaction_sku ON public.stg_financial_transactions_amazon USING btree (seller_sku);
+CREATE INDEX ix_stg_financial_transaction_processed ON public.stg_financial_transactions_amazon USING btree (processed) WHERE (processed = false);
+CREATE UNIQUE INDEX stg_financial_transactions_amazon_pkey ON public.stg_financial_transactions_amazon USING btree (id);
+CREATE INDEX ix_stg_financial_transaction_order ON public.stg_financial_transactions_amazon USING btree (amazon_order_id)"
+INDEX,stg_order_items_amazon,"CREATE INDEX ix_stg_order_items_pending ON public.stg_order_items_amazon USING btree (processed) WHERE (processed = false);
+CREATE INDEX ix_stg_order_items_order ON public.stg_order_items_amazon USING btree (amazon_order_id);
+CREATE UNIQUE INDEX stg_order_items_amazon_pkey ON public.stg_order_items_amazon USING btree (id);
+CREATE INDEX idx_stg_order_items_asin ON public.stg_order_items_amazon USING btree (asin);
+CREATE INDEX idx_stg_order_items_order_id ON public.stg_order_items_amazon USING btree (amazon_order_id);
+CREATE INDEX idx_stg_order_items_sku ON public.stg_order_items_amazon USING btree (seller_sku);
+CREATE UNIQUE INDEX uq_stg_order_items_order_item ON public.stg_order_items_amazon USING btree (amazon_order_id, order_item_id) WHERE (order_item_id IS NOT NULL)"
+INDEX,stg_order_items_mercadolivre,"CREATE INDEX idx_stg_ml_items_user ON public.stg_order_items_mercadolivre USING btree (user_id, order_id);
+CREATE UNIQUE INDEX stg_order_items_mercadolivre_pkey ON public.stg_order_items_mercadolivre USING btree (ml_account_id, order_id, item_id, variation_id)"
+INDEX,stg_orders_amazon,"CREATE UNIQUE INDEX stg_orders_amazon_pkey ON public.stg_orders_amazon USING btree (id);
+CREATE INDEX ix_stg_orders_amazon_pending ON public.stg_orders_amazon USING btree (processed) WHERE (processed = false);
+CREATE INDEX idx_stg_orders_amazon_purchase_date ON public.stg_orders_amazon USING btree (purchase_date);
+CREATE INDEX idx_stg_orders_amazon_processed ON public.stg_orders_amazon USING btree (processed);
+CREATE INDEX idx_stg_orders_amazon_order_id ON public.stg_orders_amazon USING btree (amazon_order_id);
+CREATE UNIQUE INDEX uq_stg_orders_amazon_order_id ON public.stg_orders_amazon USING btree (amazon_order_id)"
+INDEX,stg_orders_mercadolivre,"CREATE INDEX idx_stg_ml_orders_user ON public.stg_orders_mercadolivre USING btree (user_id, date_created DESC);
+CREATE UNIQUE INDEX stg_orders_mercadolivre_pkey ON public.stg_orders_mercadolivre USING btree (ml_account_id, order_id);
+CREATE INDEX stg_orders_ml_seller_idx ON public.stg_orders_mercadolivre USING btree (seller_id, date_created DESC);
+CREATE UNIQUE INDEX stg_orders_ml_uq ON public.stg_orders_mercadolivre USING btree (ml_user_id, order_id)"
+INDEX,sync_checkpoint,CREATE UNIQUE INDEX sync_checkpoint_pkey ON public.sync_checkpoint USING btree (source)
+INDEX,sync_checkpoint_orders,"CREATE UNIQUE INDEX sync_checkpoint_orders_pkey ON public.sync_checkpoint_orders USING btree (account_id, marketplace_provider)"
+INDEX,sync_execution,CREATE UNIQUE INDEX sync_execution_pkey ON public.sync_execution USING btree (id)
+TABLE,account_sku_costs,"account_id text not null,
+seller_sku text not null,
+cost_product numeric not null,
+updated_at timestamp with time zone default now() not null"
+TABLE,amazon_orders_raw,"id bigint not null,
+account_id uuid not null,
+amazon_order_id character varying not null,
+last_update_date timestamp with time zone,
+purchase_date timestamp with time zone,
+payload jsonb not null,
+payload_hash character varying,
+received_at timestamp with time zone default now(),
+processed boolean default false,
+processed_at timestamp with time zone,
+created_at timestamp with time zone default now(),
+source_api character varying default 'orders-2026-01-01'::character varying not null,
+api_source_id smallint"
+TABLE,api_sources,"id smallint default nextval('api_sources_id_seq'::regclass) not null,
+service character varying not null,
+version character varying not null,
+description character varying,
+active boolean default true"
+TABLE,app_config,"key text not null,
+value text not null"
+TABLE,bling_accounts,"id uuid default gen_random_uuid() not null,
+seller_id uuid not null,
+access_token text not null,
+refresh_token text not null,
+expires_at timestamp with time zone not null,
+status text default 'active'::text not null,
+created_at timestamp with time zone default now(),
+updated_at timestamp with time zone default now()"
+TABLE,bridge_seller_sku_identifier,"id bigint not null,
+seller_sku_id bigint not null,
+marketplace character varying not null,
+identifier_type character varying not null,
+identifier_value character varying not null,
+is_active boolean default true,
+valid_from date default CURRENT_DATE,
+valid_to date,
+created_at timestamp without time zone default CURRENT_TIMESTAMP"
+TABLE,dim_date,"date_key date not null,
+year integer not null,
+quarter integer not null,
+month integer not null,
+month_name character varying,
+week_of_year integer,
+day integer not null,
+day_of_week integer,
+day_name character varying,
+is_weekend boolean default false,
+created_at timestamp with time zone default CURRENT_TIMESTAMP"
+TABLE,dim_financial_category,"id bigint not null,
+api_event_type character varying not null,
+api_charge_type character varying not null,
+category_code character varying not null,
+category_name character varying not null,
+description text,
+is_active boolean default true,
+created_at timestamp with time zone default CURRENT_TIMESTAMP"
+TABLE,dim_seller_sku,"id bigint not null,
+seller_sku character varying not null,
+asin character varying,
+fnsku character varying,
+catalog_product_id character varying,
+product_name character varying,
+brand character varying,
+category character varying,
+product_group character varying,
+status character varying default 'ACTIVE'::character varying,
+launch_date date,
+discontinued_date date,
+cost_product numeric,
+cost_import numeric,
+cost_freight numeric,
+cost_total numeric,
+tax_regime character varying,
+tax_percentage numeric,
+fulfillment_type character varying,
+supplier character varying,
+weight numeric,
+length numeric,
+width numeric,
+height numeric,
+target_margin numeric,
+minimum_margin numeric,
+price_target numeric,
+created_at timestamp without time zone default CURRENT_TIMESTAMP,
+updated_at timestamp without time zone default CURRENT_TIMESTAMP,
+marketplace_account_id uuid"
+TABLE,fact_financial_transaction,"id bigint not null,
+financial_event_id character varying not null,
+amazon_order_id character varying,
+seller_order_id character varying,
+event_type character varying not null,
+charge_or_fee_type character varying not null,
+seller_sku_id bigint,
+financial_category_id bigint,
+asin character varying,
+seller_sku character varying,
+transaction_date timestamp with time zone not null,
+amount numeric not null,
+currency character varying default 'BRL'::character varying,
+quantity integer,
+source_system character varying default 'AMAZON_SP_API'::character varying,
+source_created_at timestamp with time zone,
+created_at timestamp with time zone default CURRENT_TIMESTAMP,
+updated_at timestamp with time zone default CURRENT_TIMESTAMP,
+transaction_date_key date"
+TABLE,fact_order,"id bigint not null,
+amazon_order_id character varying not null,
+marketplace_id character varying,
+purchase_date timestamp with time zone not null,
+order_date date not null,
+last_update_date timestamp with time zone,
+order_status character varying,
+fulfillment_channel character varying,
+sales_channel character varying,
+order_total_amount numeric,
+order_total_currency character varying,
+number_of_items integer,
+number_of_items_shipped integer,
+number_of_items_unshipped integer,
+is_business_order boolean default false,
+source_system character varying default 'AMAZON_SP_API'::character varying,
+source_created_at timestamp with time zone,
+created_at timestamp with time zone default CURRENT_TIMESTAMP,
+updated_at timestamp with time zone default CURRENT_TIMESTAMP,
+marketplace_account_id uuid not null,
+account_id uuid"
+TABLE,fact_order_item,"id bigint not null,
+order_id bigint not null,
+amazon_order_id character varying not null,
+order_item_id character varying,
+seller_sku_id bigint,
+quantity_ordered integer not null,
+item_price_amount numeric,
+item_tax_amount numeric,
+promotion_discount_amount numeric,
+item_revenue numeric,
+currency character varying,
+fulfillment_channel character varying,
+source_system character varying default 'AMAZON_SP_API'::character varying,
+created_at timestamp with time zone default CURRENT_TIMESTAMP,
+updated_at timestamp with time zone default CURRENT_TIMESTAMP,
+account_id uuid,
+cost_product numeric,
+cost_status character varying default 'pending'::character varying"
+TABLE,financial_checkpoint,"id integer default 1 not null,
+last_processed_date timestamp with time zone,
+updated_at timestamp with time zone default now()"
+TABLE,financial_events,"id uuid default gen_random_uuid() not null,
+amazon_order_id text,
+posted_date timestamp with time zone,
+seller_sku text,
+event_type text,
+charge_or_fee_type text,
+amount numeric default 0,
+currency text default 'BRL'::text,
+shipment_id text,
+raw_data jsonb,
+created_at timestamp with time zone default now(),
+updated_at timestamp with time zone default now(),
+marketplace_account_id uuid,
+account_id uuid"
+TABLE,integration_sources,"id smallint default nextval('integration_sources_id_seq'::regclass) not null,
+provider character varying not null,
+service character varying not null,
+version character varying not null,
+description character varying,
+active boolean default true,
+created_at timestamp with time zone default now()"
+TABLE,login_attempts,"key text not null,
+failures integer default 0 not null,
+window_start timestamp with time zone default now() not null"
+TABLE,marketplace_accounts,"id uuid default gen_random_uuid() not null,
+seller_name character varying not null,
+marketplace_provider character varying not null,
+marketplace_region character varying,
+marketplace_id character varying,
+merchant_id character varying,
+client_id text not null,
+client_secret text not null,
+refresh_token text not null,
+status smallint default 1,
+created_at timestamp with time zone default now(),
+updated_at timestamp with time zone default now(),
+last_orders_sync timestamp with time zone,
+last_financial_sync timestamp with time zone,
+spapi_region character varying default 'na'::character varying,
+auto_sync boolean default true,
+last_sync_at timestamp with time zone,
+user_id uuid,
+amazon_seller_id text,
+seller_id uuid"
+TABLE,marketplace_fee_estimates,"id uuid default gen_random_uuid() not null,
+seller_sku text not null,
+marketplace_id text default 'A2Q3Y263D00KWC'::text not null,
+listing_price numeric not null,
+is_fba boolean not null,
+referral_fee numeric default 0,
+fba_fulfillment_fee numeric default 0,
+variable_closing_fee numeric default 0,
+total_fees numeric default 0,
+estimated_at timestamp with time zone default now(),
+status text default 'success'::text,
+raw_response jsonb,
+mfn_postage_fee numeric default 0"
+TABLE,ml_accounts,"id uuid default gen_random_uuid() not null,
+user_id uuid not null,
+ml_user_id bigint not null,
+nickname text,
+access_token text not null,
+refresh_token text not null,
+expires_at timestamp with time zone not null,
+scope text,
+status text default 'active'::text not null,
+last_sync_at timestamp with time zone,
+created_at timestamp with time zone default now() not null,
+updated_at timestamp with time zone default now() not null"
+TABLE,ml_oauth_states,"state text not null,
+user_id uuid not null,
+created_at timestamp with time zone default now() not null,
+expires_at timestamp with time zone default (now() + '00:10:00'::interval) not null"
+TABLE,orders_amazon,"id integer default nextval('orders_amazon_id_seq'::regclass) not null,
+order_id text not null,
+order_item_id text not null,
+created_time timestamp with time zone,
+last_updated_time timestamp with time zone,
+programs text,
+marketplace_id text,
+marketplace_name text,
+channel_name text,
+condition text,
+amount numeric,
+currency_code text,
+asin text,
+seller_sku text,
+title text,
+quantity_ordered integer,
+alias_id text,
+alias_type text,
+fulfillment_channel text,
+canal_logistica text,
+raw_json jsonb,
+ingested_at timestamp with time zone default now()"
+TABLE,orders_checkpoint,"id integer default 1 not null,
+last_processed_date timestamp with time zone,
+updated_at timestamp with time zone default now()"
+TABLE,sellers,"id uuid default gen_random_uuid() not null,
+company_name character varying,
+document character varying,
+email character varying,
+status smallint default 1,
+created_at timestamp with time zone default now(),
+password text,
+name text,
+marketplace_account_id text"
+TABLE,stg_financial_transactions_amazon,"id bigint not null,
+amazon_order_id character varying,
+seller_order_id character varying,
+financial_event_id character varying,
+event_type character varying,
+event_date timestamp with time zone,
+asin character varying,
+seller_sku character varying,
+quantity integer,
+amount numeric,
+currency character varying,
+extraction_date timestamp with time zone default CURRENT_TIMESTAMP,
+extraction_batch_id character varying,
+raw_json jsonb,
+processed boolean default false,
+processed_date timestamp with time zone"
+TABLE,stg_order_items_amazon,"id bigint not null,
+amazon_order_id character varying not null,
+order_item_id character varying,
+asin character varying,
+seller_sku character varying,
+title character varying,
+quantity_ordered integer,
+item_price_amount numeric,
+item_price_currency character varying,
+item_tax_amount numeric,
+item_tax_currency character varying,
+promotion_discount_amount numeric,
+promotion_discount_currency character varying,
+condition_id character varying,
+fulfillment_channel character varying,
+is_gift boolean default false,
+extraction_date timestamp with time zone default CURRENT_TIMESTAMP,
+extraction_batch_id character varying,
+raw_json jsonb,
+processed boolean default false,
+processed_date timestamp with time zone,
+marketplace_account_id uuid"
+TABLE,stg_order_items_mercadolivre,"ml_account_id uuid not null,
+user_id uuid not null,
+order_id bigint not null,
+item_id text not null,
+variation_id bigint default 0 not null,
+title text,
+seller_sku text,
+quantity integer,
+unit_price numeric,
+full_unit_price numeric,
+sale_fee numeric,
+currency_id text,
+raw jsonb,
+synced_at timestamp with time zone default now() not null"
+TABLE,stg_orders_amazon,"id bigint not null,
+amazon_order_id character varying not null,
+marketplace_id character varying,
+purchase_date timestamp without time zone,
+last_update_date timestamp without time zone,
+order_status character varying,
+fulfillment_channel character varying,
+sales_channel character varying,
+order_total_amount numeric,
+order_total_currency character varying,
+number_of_items_unshipped integer,
+number_of_items_shipped integer,
+buyer_country character varying,
+is_business_order boolean default false,
+extraction_date timestamp without time zone default CURRENT_TIMESTAMP,
+extraction_batch_id character varying,
+raw_json jsonb,
+processed boolean default false,
+processed_date timestamp without time zone,
+items_fetched boolean default false,
+marketplace_account_id uuid"
+TABLE,stg_orders_mercadolivre,"ml_account_id uuid not null,
+user_id uuid not null,
+order_id bigint not null,
+status text,
+date_created timestamp with time zone,
+date_closed timestamp with time zone,
+date_last_updated timestamp with time zone,
+total_amount numeric,
+paid_amount numeric,
+currency_id text,
+buyer_id bigint,
+shipping_id bigint,
+pack_id bigint,
+raw jsonb,
+synced_at timestamp with time zone default now() not null,
+ml_user_id text,
+seller_id uuid,
+marketplace_account_id uuid,
+last_updated timestamp with time zone,
+tags jsonb,
+order_items jsonb,
+payments jsonb"
+TABLE,sync_checkpoint,"source character varying not null,
+last_updated_after timestamp with time zone,
+last_execution_at timestamp with time zone,
+status character varying default 'active'::character varying,
+updated_at timestamp with time zone default now(),
+checkpoint_value text,
+last_synced_at timestamp with time zone"
+TABLE,sync_checkpoint_orders,"account_id uuid not null,
+marketplace_provider integer default 1 not null,
+last_checkpoint timestamp with time zone,
+last_sync_at timestamp with time zone default now(),
+records_processed integer default 0,
+status character varying default 'pending'::character varying"
+TABLE,sync_execution,"id bigint default nextval('sync_execution_id_seq'::regclass) not null,
+account_id uuid not null,
+resource character varying,
+started_at timestamp with time zone,
+finished_at timestamp with time zone,
+status smallint,
+orders_found integer,
+rows_written integer,
+api_calls integer,
+retries integer,
+duration_ms integer,
+error_message text"
+VIEW,vw_gross_profit_consolidated," WITH actual_orders AS (
+         SELECT foi.amazon_order_id,
+            d.seller_sku,
+            d.product_name,
+            min(fe.posted_date) FILTER (WHERE (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text]))) AS posted_date,
+            fo.purchase_date AS order_purchase_date,
+            fo.order_status,
+            COALESCE(fo.fulfillment_channel, foi.fulfillment_channel) AS order_fulfillment_channel,
+            fo.sales_channel,
+            fo.account_id,
+            foi.order_item_id,
+            foi.quantity_ordered,
+            foi.item_price_amount,
+            foi.item_revenue,
+            COALESCE(foi.promotion_discount_amount, (0)::numeric) AS promotion_discount,
+            COALESCE(foi.cost_product, d.cost_product, (0)::numeric) AS cost_product,
+            foi.cost_status,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Principal'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS principal,
+            (0)::numeric AS shipping_charge,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Tax'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS tax,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'FBAPerUnitFulfillmentFee'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS fba_fee,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'Commission'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS commission,
+            sum(
+                CASE
+                    WHEN (fe.event_type = 'ItemFee'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS total_item_fees,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ServiceFee'::text) AND (fe.charge_or_fee_type = 'MFNPostageFee'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_postage_fee_actual,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ServiceFee'::text) AND (fe.charge_or_fee_type = 'MFNShippingChargeback'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_shipping_chargeback,
+            'actual'::text AS fee_source
+           FROM (((fact_order_item foi
+             JOIN fact_order fo ON (((foi.amazon_order_id)::text = (fo.amazon_order_id)::text)))
+             LEFT JOIN dim_seller_sku d ON ((foi.seller_sku_id = d.id)))
+             LEFT JOIN financial_events fe ON (((fe.amazon_order_id = (foi.amazon_order_id)::text) AND (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text, 'ServiceFee'::text])))))
+          GROUP BY foi.amazon_order_id, d.seller_sku, d.product_name, fo.purchase_date, fo.order_status, COALESCE(fo.fulfillment_channel, foi.fulfillment_channel), fo.sales_channel, fo.account_id, foi.order_item_id, foi.quantity_ordered, foi.item_price_amount, foi.item_revenue, foi.promotion_discount_amount, COALESCE(foi.cost_product, d.cost_product, (0)::numeric), foi.cost_status
+        )
+ SELECT ao.amazon_order_id,
+    ao.seller_sku,
+    ao.product_name,
+    ao.posted_date,
+    ao.order_purchase_date,
+    ao.order_status,
+    ao.order_fulfillment_channel,
+    ao.sales_channel,
+    ao.account_id,
+    ao.order_item_id,
+    ao.quantity_ordered,
+    ao.item_price_amount,
+    ao.item_revenue,
+    (ao.promotion_discount * (ao.quantity_ordered)::numeric) AS promotion_discount,
+    ao.cost_product,
+    ao.cost_status,
+    ao.principal,
+    ao.shipping_charge,
+    ao.tax,
+    ao.fba_fee,
+    ao.commission,
+    (ao.total_item_fees + ao.mfn_postage_fee_actual) AS total_fees,
+        CASE
+            WHEN (ao.mfn_postage_fee_actual <> (0)::numeric) THEN ao.mfn_postage_fee_actual
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (ao.quantity_ordered)::numeric)
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (ao.quantity_ordered)::numeric)
+            ELSE (0)::numeric
+        END AS mfn_postage_fee,
+    ao.mfn_shipping_chargeback,
+    (0)::numeric AS total_service_fees,
+    ((((ao.principal + ao.commission) + ao.fba_fee) +
+        CASE
+            WHEN (ao.mfn_postage_fee_actual <> (0)::numeric) THEN ao.mfn_postage_fee_actual
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (ao.quantity_ordered)::numeric)
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (ao.quantity_ordered)::numeric)
+            ELSE (0)::numeric
+        END) - (ao.promotion_discount * (ao.quantity_ordered)::numeric)) AS net_revenue,
+    (((((ao.principal + ao.commission) + ao.fba_fee) +
+        CASE
+            WHEN (ao.mfn_postage_fee_actual <> (0)::numeric) THEN ao.mfn_postage_fee_actual
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (ao.quantity_ordered)::numeric)
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (ao.quantity_ordered)::numeric)
+            ELSE (0)::numeric
+        END) - (ao.promotion_discount * (ao.quantity_ordered)::numeric)) - (ao.cost_product * (ao.quantity_ordered)::numeric)) AS gross_profit,
+    ao.fee_source
+   FROM actual_orders ao
+  WHERE (EXISTS ( SELECT 1
+           FROM financial_events fe
+          WHERE ((fe.amazon_order_id = (ao.amazon_order_id)::text) AND (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text])))))
+UNION ALL
+ SELECT vw_net_marketplace_estimated.amazon_order_id,
+    vw_net_marketplace_estimated.seller_sku,
+    vw_net_marketplace_estimated.product_name,
+    vw_net_marketplace_estimated.posted_date,
+    vw_net_marketplace_estimated.order_purchase_date,
+    vw_net_marketplace_estimated.order_status,
+    vw_net_marketplace_estimated.order_fulfillment_channel,
+    vw_net_marketplace_estimated.sales_channel,
+    vw_net_marketplace_estimated.account_id,
+    vw_net_marketplace_estimated.order_item_id,
+    vw_net_marketplace_estimated.quantity_ordered,
+    vw_net_marketplace_estimated.item_price_amount,
+    vw_net_marketplace_estimated.item_revenue,
+    vw_net_marketplace_estimated.promotion_discount,
+    vw_net_marketplace_estimated.cost_product,
+    vw_net_marketplace_estimated.cost_status,
+    vw_net_marketplace_estimated.principal,
+    vw_net_marketplace_estimated.shipping_charge,
+    vw_net_marketplace_estimated.tax,
+    vw_net_marketplace_estimated.fba_fee,
+    vw_net_marketplace_estimated.commission,
+    vw_net_marketplace_estimated.total_fees,
+    vw_net_marketplace_estimated.mfn_postage_fee,
+    vw_net_marketplace_estimated.mfn_shipping_chargeback,
+    vw_net_marketplace_estimated.total_service_fees,
+    vw_net_marketplace_estimated.net_revenue,
+    vw_net_marketplace_estimated.gross_profit,
+    vw_net_marketplace_estimated.fee_source
+   FROM vw_net_marketplace_estimated;"
+VIEW,vw_gross_profit_consolidated_v2," WITH actual_orders AS (
+         SELECT foi.amazon_order_id,
+            d.seller_sku,
+            d.product_name,
+            NULL::timestamp with time zone AS posted_date,
+            fo.purchase_date AS order_purchase_date,
+            fo.order_status,
+            COALESCE(fo.fulfillment_channel, foi.fulfillment_channel) AS order_fulfillment_channel,
+            fo.sales_channel,
+            fo.account_id,
+            foi.order_item_id,
+            foi.quantity_ordered,
+            foi.item_price_amount,
+            foi.item_revenue,
+            COALESCE(foi.promotion_discount_amount, (0)::numeric) AS promotion_discount,
+            COALESCE(foi.cost_product, d.cost_product, (0)::numeric) AS cost_product,
+            foi.cost_status,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Principal'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS principal,
+            (0)::numeric AS shipping_charge,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Tax'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS tax,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'FBAPerUnitFulfillmentFee'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS fba_fee,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'Commission'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS commission,
+            sum(
+                CASE
+                    WHEN (fe.event_type = 'ItemFee'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS total_item_fees,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ServiceFee'::text) AND (fe.charge_or_fee_type = 'MFNPostageFee'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_postage_fee_actual,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ServiceFee'::text) AND (fe.charge_or_fee_type = 'MFNShippingChargeback'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_shipping_chargeback,
+            'actual'::text AS fee_source
+           FROM (((fact_order_item foi
+             JOIN fact_order fo ON ((fo.id = foi.order_id)))
+             LEFT JOIN dim_seller_sku d ON ((foi.seller_sku_id = d.id)))
+             LEFT JOIN financial_events fe ON (((fe.amazon_order_id = (foi.amazon_order_id)::text) AND (fe.marketplace_account_id = fo.marketplace_account_id) AND (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text, 'ServiceFee'::text])))))
+          GROUP BY foi.amazon_order_id, d.seller_sku, d.product_name, fo.purchase_date, fo.order_status, COALESCE(fo.fulfillment_channel, foi.fulfillment_channel), fo.sales_channel, fo.account_id, foi.order_item_id, foi.quantity_ordered, foi.item_price_amount, foi.item_revenue, foi.promotion_discount_amount, COALESCE(foi.cost_product, d.cost_product, (0)::numeric), foi.cost_status
+        )
+ SELECT ao.amazon_order_id,
+    ao.seller_sku,
+    ao.product_name,
+    ao.posted_date,
+    ao.order_purchase_date,
+    ao.order_status,
+    ao.order_fulfillment_channel,
+    ao.sales_channel,
+    ao.account_id,
+    ao.order_item_id,
+    ao.quantity_ordered,
+    ao.item_price_amount,
+    ao.item_revenue,
+    (ao.promotion_discount * (ao.quantity_ordered)::numeric) AS promotion_discount,
+    ao.cost_product,
+    ao.cost_status,
+    ao.principal,
+    ao.shipping_charge,
+    ao.tax,
+    ao.fba_fee,
+    ao.commission,
+    (ao.total_item_fees + ao.mfn_postage_fee_actual) AS total_fees,
+        CASE
+            WHEN (ao.mfn_postage_fee_actual <> (0)::numeric) THEN ao.mfn_postage_fee_actual
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (ao.quantity_ordered)::numeric)
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (ao.quantity_ordered)::numeric)
+            ELSE (0)::numeric
+        END AS mfn_postage_fee,
+    ao.mfn_shipping_chargeback,
+    (0)::numeric AS total_service_fees,
+    ((((ao.principal + ao.commission) + ao.fba_fee) +
+        CASE
+            WHEN (ao.mfn_postage_fee_actual <> (0)::numeric) THEN ao.mfn_postage_fee_actual
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (ao.quantity_ordered)::numeric)
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (ao.quantity_ordered)::numeric)
+            ELSE (0)::numeric
+        END) - (ao.promotion_discount * (ao.quantity_ordered)::numeric)) AS net_revenue,
+    (((((ao.principal + ao.commission) + ao.fba_fee) +
+        CASE
+            WHEN (ao.mfn_postage_fee_actual <> (0)::numeric) THEN ao.mfn_postage_fee_actual
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (ao.quantity_ordered)::numeric)
+            WHEN (((ao.order_fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((ao.item_price_amount / (NULLIF(ao.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (ao.quantity_ordered)::numeric)
+            ELSE (0)::numeric
+        END) - (ao.promotion_discount * (ao.quantity_ordered)::numeric)) - (ao.cost_product * (ao.quantity_ordered)::numeric)) AS gross_profit,
+    ao.fee_source
+   FROM actual_orders ao
+  WHERE (EXISTS ( SELECT 1
+           FROM financial_events fe
+          WHERE ((fe.amazon_order_id = (ao.amazon_order_id)::text) AND (fe.marketplace_account_id = ( SELECT fo.marketplace_account_id
+                   FROM fact_order fo
+                  WHERE ((fo.amazon_order_id)::text = (ao.amazon_order_id)::text)
+                 LIMIT 1)) AND (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text])))))
+UNION ALL
+ SELECT v.amazon_order_id,
+    v.seller_sku,
+    v.product_name,
+    v.posted_date,
+    v.order_purchase_date,
+    v.order_status,
+    v.order_fulfillment_channel,
+    v.sales_channel,
+    v.account_id,
+    v.order_item_id,
+    v.quantity_ordered,
+    v.item_price_amount,
+    v.item_revenue,
+    v.promotion_discount,
+    v.cost_product,
+    v.cost_status,
+    v.principal,
+    v.shipping_charge,
+    v.tax,
+    v.fba_fee,
+    v.commission,
+    v.total_fees,
+    v.mfn_postage_fee,
+    v.mfn_shipping_chargeback,
+    v.total_service_fees,
+    v.net_revenue,
+    v.gross_profit,
+    v.fee_source
+   FROM vw_net_marketplace_estimated_v2 v;"
+VIEW,vw_net_marketplace," WITH item_events AS (
+         SELECT fe.amazon_order_id,
+            fe.seller_sku,
+            fe.posted_date,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Principal'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS principal,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'ShippingCharge'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS shipping_charge,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Tax'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS tax,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'FBAPerUnitFulfillmentFee'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS fba_fee,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'Commission'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS commission,
+            sum(
+                CASE
+                    WHEN (fe.event_type = 'ItemFee'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS total_fees
+           FROM financial_events fe
+          WHERE (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text]))
+          GROUP BY fe.amazon_order_id, fe.seller_sku, fe.posted_date
+        ), service_fees AS (
+         SELECT fe.amazon_order_id,
+            sum(
+                CASE
+                    WHEN (fe.charge_or_fee_type = 'MFNPostageFee'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_postage_fee,
+            sum(
+                CASE
+                    WHEN (fe.charge_or_fee_type = 'MFNShippingChargeback'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_shipping_chargeback,
+            sum(fe.amount) AS total_service_fees
+           FROM financial_events fe
+          WHERE (fe.event_type = 'ServiceFee'::text)
+          GROUP BY fe.amazon_order_id
+        )
+ SELECT ie.amazon_order_id,
+    ie.seller_sku,
+    d.product_name,
+    ie.posted_date,
+    fo.purchase_date AS order_purchase_date,
+    fo.order_status,
+    fo.fulfillment_channel AS order_fulfillment_channel,
+    fo.sales_channel,
+    fo.account_id,
+    foi.order_item_id,
+    foi.quantity_ordered,
+    foi.item_price_amount,
+    foi.item_revenue,
+    COALESCE(foi.promotion_discount_amount, (0)::numeric) AS promotion_discount,
+    COALESCE(d.cost_product, (0)::numeric) AS cost_product,
+    foi.cost_status,
+    ie.principal,
+    ie.shipping_charge,
+    ie.tax,
+    ie.fba_fee,
+    ie.commission,
+    ie.total_fees,
+    COALESCE(sf.mfn_postage_fee, (0)::numeric) AS mfn_postage_fee,
+    COALESCE(sf.mfn_shipping_chargeback, (0)::numeric) AS mfn_shipping_chargeback,
+    COALESCE(sf.total_service_fees, (0)::numeric) AS total_service_fees,
+    ((((ie.principal + ie.shipping_charge) + ie.total_fees) + COALESCE(sf.total_service_fees, (0)::numeric)) - COALESCE(foi.promotion_discount_amount, (0)::numeric)) AS net_revenue,
+    (((((ie.principal + ie.shipping_charge) + ie.total_fees) + COALESCE(sf.total_service_fees, (0)::numeric)) - COALESCE(foi.promotion_discount_amount, (0)::numeric)) - (COALESCE(d.cost_product, (0)::numeric) * (COALESCE(foi.quantity_ordered, 0))::numeric)) AS gross_profit
+   FROM ((((item_events ie
+     LEFT JOIN fact_order fo ON ((ie.amazon_order_id = (fo.amazon_order_id)::text)))
+     LEFT JOIN fact_order_item foi ON (((ie.amazon_order_id = (foi.amazon_order_id)::text) AND (ie.seller_sku = (( SELECT d2.seller_sku
+           FROM dim_seller_sku d2
+          WHERE (d2.id = foi.seller_sku_id)))::text))))
+     LEFT JOIN dim_seller_sku d ON ((foi.seller_sku_id = d.id)))
+     LEFT JOIN service_fees sf ON ((ie.amazon_order_id = sf.amazon_order_id)));"
+VIEW,vw_net_marketplace_estimated," WITH missing_orders AS (
+         SELECT foi.amazon_order_id,
+            d.seller_sku,
+            d.product_name,
+            fo.purchase_date,
+            fo.order_status,
+            COALESCE(fo.fulfillment_channel, foi.fulfillment_channel) AS fulfillment_channel,
+            fo.sales_channel,
+            fo.account_id,
+            foi.order_item_id,
+            foi.quantity_ordered,
+            foi.item_price_amount,
+            foi.item_revenue,
+            foi.promotion_discount_amount,
+            COALESCE(foi.cost_product, d.cost_product, (0)::numeric) AS cost_product,
+            foi.cost_status
+           FROM ((fact_order_item foi
+             LEFT JOIN fact_order fo ON (((foi.amazon_order_id)::text = (fo.amazon_order_id)::text)))
+             LEFT JOIN dim_seller_sku d ON ((foi.seller_sku_id = d.id)))
+          WHERE (NOT (EXISTS ( SELECT 1
+                   FROM financial_events fe_1
+                  WHERE ((fe_1.amazon_order_id = (foi.amazon_order_id)::text) AND (fe_1.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text]))))))
+        ), service_fees AS (
+         SELECT fe_1.amazon_order_id,
+            fe_1.seller_sku,
+            sum(
+                CASE
+                    WHEN (fe_1.charge_or_fee_type = 'MFNPostageFee'::text) THEN fe_1.amount
+                    ELSE (0)::numeric
+                END) AS mfn_postage_fee_actual,
+            sum(
+                CASE
+                    WHEN (fe_1.charge_or_fee_type = 'MFNShippingChargeback'::text) THEN fe_1.amount
+                    ELSE (0)::numeric
+                END) AS mfn_shipping_chargeback
+           FROM financial_events fe_1
+          WHERE (fe_1.event_type = 'ServiceFee'::text)
+          GROUP BY fe_1.amazon_order_id, fe_1.seller_sku
+        ), last_mfn_fee AS (
+         SELECT DISTINCT ON (fe_1.seller_sku) fe_1.seller_sku,
+            fe_1.amount AS mfn_postage_fee_hist
+           FROM financial_events fe_1
+          WHERE ((fe_1.charge_or_fee_type = 'MFNPostageFee'::text) AND (fe_1.amount <> (0)::numeric))
+          ORDER BY fe_1.seller_sku, fe_1.posted_date DESC
+        ), sp_api_fees AS (
+         SELECT DISTINCT ON (mo.order_item_id) mo.order_item_id,
+            mfe.referral_fee,
+            mfe.fba_fulfillment_fee,
+            mfe.variable_closing_fee,
+            mfe.mfn_postage_fee,
+            mfe.total_fees,
+            mfe.estimated_at
+           FROM (missing_orders mo
+             LEFT JOIN LATERAL ( SELECT mfe_1.id,
+                    mfe_1.seller_sku,
+                    mfe_1.marketplace_id,
+                    mfe_1.listing_price,
+                    mfe_1.is_fba,
+                    mfe_1.referral_fee,
+                    mfe_1.fba_fulfillment_fee,
+                    mfe_1.variable_closing_fee,
+                    mfe_1.mfn_postage_fee,
+                    mfe_1.total_fees,
+                    mfe_1.estimated_at,
+                    mfe_1.status,
+                    mfe_1.raw_response
+                   FROM marketplace_fee_estimates mfe_1
+                  WHERE ((mfe_1.seller_sku = (mo.seller_sku)::text) AND (mfe_1.listing_price = mo.item_price_amount) AND (mfe_1.is_fba = ((mo.fulfillment_channel)::text = ANY (ARRAY['AFN'::text, 'AMAZON'::text]))))
+                  ORDER BY mfe_1.estimated_at DESC
+                 LIMIT 1) mfe ON (true))
+        ), hist_item AS (
+         SELECT fe_1.amazon_order_id,
+            fe_1.seller_sku,
+            fe_1.posted_date,
+            sum(
+                CASE
+                    WHEN ((fe_1.event_type = 'ItemCharge'::text) AND (fe_1.charge_or_fee_type = 'Principal'::text)) THEN fe_1.amount
+                    ELSE (0)::numeric
+                END) AS principal,
+            sum(
+                CASE
+                    WHEN ((fe_1.event_type = 'ItemFee'::text) AND (fe_1.charge_or_fee_type = 'FBAPerUnitFulfillmentFee'::text)) THEN fe_1.amount
+                    ELSE (0)::numeric
+                END) AS fba_fee,
+            sum(
+                CASE
+                    WHEN ((fe_1.event_type = 'ItemFee'::text) AND (fe_1.charge_or_fee_type = 'Commission'::text)) THEN fe_1.amount
+                    ELSE (0)::numeric
+                END) AS commission,
+            sum(
+                CASE
+                    WHEN (fe_1.event_type = 'ItemFee'::text) THEN fe_1.amount
+                    ELSE (0)::numeric
+                END) AS total_fees,
+            sum(
+                CASE
+                    WHEN ((fe_1.event_type = 'ItemCharge'::text) AND (fe_1.charge_or_fee_type = 'Tax'::text)) THEN fe_1.amount
+                    ELSE (0)::numeric
+                END) AS tax
+           FROM financial_events fe_1
+          WHERE (fe_1.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text]))
+          GROUP BY fe_1.amazon_order_id, fe_1.seller_sku, fe_1.posted_date
+        ), sku_stats AS (
+         SELECT hi.seller_sku,
+            avg(hi.tax) AS avg_tax,
+            sum(hi.commission) AS sum_commission,
+            sum(hi.principal) AS sum_principal,
+            count(*) AS sample_count
+           FROM hist_item hi
+          GROUP BY hi.seller_sku
+        ), last_fba_sku AS (
+         SELECT DISTINCT ON (hi.seller_sku) hi.seller_sku,
+            hi.fba_fee,
+            hi.posted_date
+           FROM hist_item hi
+          WHERE ((hi.fba_fee IS NOT NULL) AND (hi.fba_fee <> (0)::numeric))
+          ORDER BY hi.seller_sku, hi.posted_date DESC
+        ), fallback_estimates AS (
+         SELECT mo.amazon_order_id,
+            mo.seller_sku,
+            mo.product_name,
+            mo.purchase_date,
+            mo.order_status,
+            mo.fulfillment_channel,
+            mo.sales_channel,
+            mo.account_id,
+            mo.order_item_id,
+            mo.quantity_ordered,
+            mo.item_price_amount,
+            mo.item_revenue,
+            mo.promotion_discount_amount,
+            mo.cost_product,
+            mo.cost_status,
+                CASE
+                    WHEN ((ss.sample_count >= 3) AND (ss.sum_principal <> (0)::numeric)) THEN ((ss.sum_commission / ss.sum_principal) * mo.item_price_amount)
+                    ELSE (0)::numeric
+                END AS est_commission_hist,
+            COALESCE(lfs.fba_fee, (0)::numeric) AS est_fba_fee_hist,
+            COALESCE(ss.avg_tax, (0)::numeric) AS est_tax_hist,
+            sp.referral_fee,
+            sp.fba_fulfillment_fee,
+            sp.variable_closing_fee,
+            sp.mfn_postage_fee,
+            sp.total_fees,
+            COALESCE(sf.mfn_postage_fee_actual, (0)::numeric) AS mfn_postage_fee_actual,
+            COALESCE(sf.mfn_shipping_chargeback, (0)::numeric) AS mfn_shipping_chargeback,
+            COALESCE(lmf.mfn_postage_fee_hist, (0)::numeric) AS mfn_postage_fee_hist
+           FROM (((((missing_orders mo
+             LEFT JOIN sku_stats ss ON (((mo.seller_sku)::text = ss.seller_sku)))
+             LEFT JOIN last_fba_sku lfs ON (((mo.seller_sku)::text = lfs.seller_sku)))
+             LEFT JOIN sp_api_fees sp ON (((mo.order_item_id)::text = (sp.order_item_id)::text)))
+             LEFT JOIN service_fees sf ON ((((mo.amazon_order_id)::text = sf.amazon_order_id) AND ((mo.seller_sku)::text = sf.seller_sku))))
+             LEFT JOIN last_mfn_fee lmf ON (((mo.seller_sku)::text = lmf.seller_sku)))
+        ), mfn_with_rule AS (
+         SELECT fallback_estimates.amazon_order_id,
+            fallback_estimates.seller_sku,
+            fallback_estimates.product_name,
+            fallback_estimates.purchase_date,
+            fallback_estimates.order_status,
+            fallback_estimates.fulfillment_channel,
+            fallback_estimates.sales_channel,
+            fallback_estimates.account_id,
+            fallback_estimates.order_item_id,
+            fallback_estimates.quantity_ordered,
+            fallback_estimates.item_price_amount,
+            fallback_estimates.item_revenue,
+            fallback_estimates.promotion_discount_amount,
+            fallback_estimates.cost_product,
+            fallback_estimates.cost_status,
+            fallback_estimates.est_commission_hist,
+            fallback_estimates.est_fba_fee_hist,
+            fallback_estimates.est_tax_hist,
+            fallback_estimates.referral_fee,
+            fallback_estimates.fba_fulfillment_fee,
+            fallback_estimates.variable_closing_fee,
+            fallback_estimates.mfn_postage_fee,
+            fallback_estimates.total_fees,
+            fallback_estimates.mfn_postage_fee_actual,
+            fallback_estimates.mfn_shipping_chargeback,
+            fallback_estimates.mfn_postage_fee_hist,
+            COALESCE(NULLIF(fallback_estimates.mfn_postage_fee_actual, (0)::numeric), (fallback_estimates.mfn_postage_fee * (fallback_estimates.quantity_ordered)::numeric), NULLIF((fallback_estimates.mfn_postage_fee_hist * (fallback_estimates.quantity_ordered)::numeric), (0)::numeric),
+                CASE
+                    WHEN (((fallback_estimates.fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((fallback_estimates.item_price_amount / (NULLIF(fallback_estimates.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (fallback_estimates.quantity_ordered)::numeric)
+                    WHEN (((fallback_estimates.fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((fallback_estimates.item_price_amount / (NULLIF(fallback_estimates.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (fallback_estimates.quantity_ordered)::numeric)
+                    ELSE (0)::numeric
+                END) AS mfn_postage_fee_calculado
+           FROM fallback_estimates
+        )
+ SELECT amazon_order_id,
+    seller_sku,
+    product_name,
+    NULL::timestamp with time zone AS posted_date,
+    purchase_date AS order_purchase_date,
+    order_status,
+    fulfillment_channel AS order_fulfillment_channel,
+    sales_channel,
+    account_id,
+    order_item_id,
+    quantity_ordered,
+    item_price_amount,
+    item_revenue,
+    (COALESCE(promotion_discount_amount, (0)::numeric) * (quantity_ordered)::numeric) AS promotion_discount,
+    cost_product,
+    cost_status,
+    (item_price_amount * (quantity_ordered)::numeric) AS principal,
+    (0)::numeric AS shipping_charge,
+    (est_tax_hist * (quantity_ordered)::numeric) AS tax,
+    (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric) AS fba_fee,
+    (COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric) AS commission,
+    (((COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric) + (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric)) + mfn_postage_fee_calculado) AS total_fees,
+    mfn_postage_fee_calculado AS mfn_postage_fee,
+    mfn_shipping_chargeback,
+    (0)::numeric AS total_service_fees,
+    (((((item_price_amount * (quantity_ordered)::numeric) + (COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric)) + (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric)) + mfn_postage_fee_calculado) - (COALESCE(promotion_discount_amount, (0)::numeric) * (quantity_ordered)::numeric)) AS net_revenue,
+    ((((((item_price_amount * (quantity_ordered)::numeric) + (COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric)) + (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric)) + mfn_postage_fee_calculado) - (COALESCE(promotion_discount_amount, (0)::numeric) * (quantity_ordered)::numeric)) - (COALESCE(cost_product, (0)::numeric) * (quantity_ordered)::numeric)) AS gross_profit,
+        CASE
+            WHEN (referral_fee IS NOT NULL) THEN 'sp_api'::text
+            ELSE 'historical'::text
+        END AS fee_source
+   FROM mfn_with_rule fe;"
+VIEW,vw_net_marketplace_estimated_v2," WITH missing_orders AS (
+         SELECT foi.amazon_order_id,
+            d.seller_sku,
+            d.product_name,
+            fo.purchase_date,
+            fo.order_status,
+            COALESCE(fo.fulfillment_channel, foi.fulfillment_channel) AS fulfillment_channel,
+            fo.sales_channel,
+            fo.account_id,
+            fo.marketplace_account_id,
+            ma.marketplace_id,
+            foi.order_item_id,
+            foi.quantity_ordered,
+            foi.item_price_amount,
+            foi.item_revenue,
+            foi.promotion_discount_amount,
+            COALESCE(foi.cost_product, d.cost_product, (0)::numeric) AS cost_product,
+            foi.cost_status
+           FROM (((fact_order_item foi
+             JOIN fact_order fo ON ((fo.id = foi.order_id)))
+             LEFT JOIN dim_seller_sku d ON ((foi.seller_sku_id = d.id)))
+             LEFT JOIN marketplace_accounts ma ON ((ma.id = fo.marketplace_account_id)))
+          WHERE (NOT (EXISTS ( SELECT 1
+                   FROM financial_events fe
+                  WHERE ((fe.amazon_order_id = (foi.amazon_order_id)::text) AND (fe.marketplace_account_id = fo.marketplace_account_id) AND (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text]))))))
+        ), service_fees AS (
+         SELECT fe.amazon_order_id,
+            fe.marketplace_account_id,
+            fe.seller_sku,
+            sum(
+                CASE
+                    WHEN (fe.charge_or_fee_type = 'MFNPostageFee'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_postage_fee_actual,
+            sum(
+                CASE
+                    WHEN (fe.charge_or_fee_type = 'MFNShippingChargeback'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS mfn_shipping_chargeback
+           FROM financial_events fe
+          WHERE (fe.event_type = 'ServiceFee'::text)
+          GROUP BY fe.amazon_order_id, fe.marketplace_account_id, fe.seller_sku
+        ), last_mfn_fee AS (
+         SELECT DISTINCT ON (fe.marketplace_account_id, fe.seller_sku) fe.marketplace_account_id,
+            fe.seller_sku,
+            fe.amount AS mfn_postage_fee_hist
+           FROM financial_events fe
+          WHERE ((fe.charge_or_fee_type = 'MFNPostageFee'::text) AND (fe.amount <> (0)::numeric))
+          ORDER BY fe.marketplace_account_id, fe.seller_sku, fe.posted_date DESC
+        ), sp_api_fees AS (
+         SELECT DISTINCT ON (mo.order_item_id) mo.order_item_id,
+            mfe.referral_fee,
+            mfe.fba_fulfillment_fee,
+            mfe.variable_closing_fee,
+            mfe.mfn_postage_fee,
+            mfe.total_fees,
+            mfe.estimated_at
+           FROM (missing_orders mo
+             LEFT JOIN LATERAL ( SELECT mfe_1.id,
+                    mfe_1.seller_sku,
+                    mfe_1.marketplace_id,
+                    mfe_1.listing_price,
+                    mfe_1.is_fba,
+                    mfe_1.referral_fee,
+                    mfe_1.fba_fulfillment_fee,
+                    mfe_1.variable_closing_fee,
+                    mfe_1.mfn_postage_fee,
+                    mfe_1.total_fees,
+                    mfe_1.estimated_at,
+                    mfe_1.status,
+                    mfe_1.raw_response
+                   FROM marketplace_fee_estimates mfe_1
+                  WHERE ((mfe_1.seller_sku = (mo.seller_sku)::text) AND (mfe_1.marketplace_id = (mo.marketplace_id)::text) AND (mfe_1.listing_price = mo.item_price_amount) AND (mfe_1.is_fba = ((mo.fulfillment_channel)::text = ANY (ARRAY['AFN'::text, 'AMAZON'::text]))))
+                  ORDER BY mfe_1.estimated_at DESC
+                 LIMIT 1) mfe ON (true))
+        ), hist_item AS (
+         SELECT fe.amazon_order_id,
+            fe.marketplace_account_id,
+            fe.seller_sku,
+            fe.posted_date,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Principal'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS principal,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'FBAPerUnitFulfillmentFee'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS fba_fee,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemFee'::text) AND (fe.charge_or_fee_type = 'Commission'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS commission,
+            sum(
+                CASE
+                    WHEN (fe.event_type = 'ItemFee'::text) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS total_fees,
+            sum(
+                CASE
+                    WHEN ((fe.event_type = 'ItemCharge'::text) AND (fe.charge_or_fee_type = 'Tax'::text)) THEN fe.amount
+                    ELSE (0)::numeric
+                END) AS tax
+           FROM financial_events fe
+          WHERE (fe.event_type = ANY (ARRAY['ItemCharge'::text, 'ItemFee'::text]))
+          GROUP BY fe.amazon_order_id, fe.marketplace_account_id, fe.seller_sku, fe.posted_date
+        ), sku_stats AS (
+         SELECT hi.marketplace_account_id,
+            hi.seller_sku,
+            avg(hi.tax) AS avg_tax,
+            sum(hi.commission) AS sum_commission,
+            sum(hi.principal) AS sum_principal,
+            count(*) AS sample_count
+           FROM hist_item hi
+          GROUP BY hi.marketplace_account_id, hi.seller_sku
+        ), last_fba_sku AS (
+         SELECT DISTINCT ON (hi.marketplace_account_id, hi.seller_sku) hi.marketplace_account_id,
+            hi.seller_sku,
+            hi.fba_fee,
+            hi.posted_date
+           FROM hist_item hi
+          WHERE ((hi.fba_fee IS NOT NULL) AND (hi.fba_fee <> (0)::numeric))
+          ORDER BY hi.marketplace_account_id, hi.seller_sku, hi.posted_date DESC
+        ), fallback_estimates AS (
+         SELECT mo.amazon_order_id,
+            mo.seller_sku,
+            mo.product_name,
+            mo.purchase_date,
+            mo.order_status,
+            mo.fulfillment_channel,
+            mo.sales_channel,
+            mo.account_id,
+            mo.marketplace_account_id,
+            mo.order_item_id,
+            mo.quantity_ordered,
+            mo.item_price_amount,
+            mo.item_revenue,
+            mo.promotion_discount_amount,
+            mo.cost_product,
+            mo.cost_status,
+                CASE
+                    WHEN ((ss.sample_count >= 3) AND (ss.sum_principal <> (0)::numeric)) THEN ((ss.sum_commission / ss.sum_principal) * mo.item_price_amount)
+                    ELSE (0)::numeric
+                END AS est_commission_hist,
+            COALESCE(lfs.fba_fee, (0)::numeric) AS est_fba_fee_hist,
+            COALESCE(ss.avg_tax, (0)::numeric) AS est_tax_hist,
+            sp.referral_fee,
+            sp.fba_fulfillment_fee,
+            sp.variable_closing_fee,
+            sp.mfn_postage_fee,
+            sp.total_fees,
+            COALESCE(sf.mfn_postage_fee_actual, (0)::numeric) AS mfn_postage_fee_actual,
+            COALESCE(sf.mfn_shipping_chargeback, (0)::numeric) AS mfn_shipping_chargeback,
+            COALESCE(lmf.mfn_postage_fee_hist, (0)::numeric) AS mfn_postage_fee_hist
+           FROM (((((missing_orders mo
+             LEFT JOIN sku_stats ss ON (((mo.marketplace_account_id = ss.marketplace_account_id) AND ((mo.seller_sku)::text = ss.seller_sku))))
+             LEFT JOIN last_fba_sku lfs ON (((mo.marketplace_account_id = lfs.marketplace_account_id) AND ((mo.seller_sku)::text = lfs.seller_sku))))
+             LEFT JOIN sp_api_fees sp ON (((mo.order_item_id)::text = (sp.order_item_id)::text)))
+             LEFT JOIN service_fees sf ON ((((mo.amazon_order_id)::text = sf.amazon_order_id) AND (mo.marketplace_account_id = sf.marketplace_account_id) AND ((mo.seller_sku)::text = sf.seller_sku))))
+             LEFT JOIN last_mfn_fee lmf ON (((mo.marketplace_account_id = lmf.marketplace_account_id) AND ((mo.seller_sku)::text = lmf.seller_sku))))
+        ), mfn_with_rule AS (
+         SELECT fallback_estimates.amazon_order_id,
+            fallback_estimates.seller_sku,
+            fallback_estimates.product_name,
+            fallback_estimates.purchase_date,
+            fallback_estimates.order_status,
+            fallback_estimates.fulfillment_channel,
+            fallback_estimates.sales_channel,
+            fallback_estimates.account_id,
+            fallback_estimates.order_item_id,
+            fallback_estimates.quantity_ordered,
+            fallback_estimates.item_price_amount,
+            fallback_estimates.item_revenue,
+            fallback_estimates.promotion_discount_amount,
+            fallback_estimates.cost_product,
+            fallback_estimates.cost_status,
+            fallback_estimates.est_commission_hist,
+            fallback_estimates.est_fba_fee_hist,
+            fallback_estimates.est_tax_hist,
+            fallback_estimates.referral_fee,
+            fallback_estimates.fba_fulfillment_fee,
+            fallback_estimates.variable_closing_fee,
+            fallback_estimates.mfn_postage_fee,
+            fallback_estimates.total_fees,
+            fallback_estimates.mfn_postage_fee_actual,
+            fallback_estimates.mfn_shipping_chargeback,
+            fallback_estimates.mfn_postage_fee_hist,
+            COALESCE(NULLIF(fallback_estimates.mfn_postage_fee_actual, (0)::numeric), (fallback_estimates.mfn_postage_fee * (fallback_estimates.quantity_ordered)::numeric), NULLIF((fallback_estimates.mfn_postage_fee_hist * (fallback_estimates.quantity_ordered)::numeric), (0)::numeric),
+                CASE
+                    WHEN (((fallback_estimates.fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((fallback_estimates.item_price_amount / (NULLIF(fallback_estimates.quantity_ordered, 0))::numeric) <= 30.00)) THEN ('-4.50'::numeric * (fallback_estimates.quantity_ordered)::numeric)
+                    WHEN (((fallback_estimates.fulfillment_channel)::text = ANY (ARRAY['DBA'::text, 'MFN'::text])) AND ((fallback_estimates.item_price_amount / (NULLIF(fallback_estimates.quantity_ordered, 0))::numeric) <= 79.00)) THEN ('-6.75'::numeric * (fallback_estimates.quantity_ordered)::numeric)
+                    ELSE (0)::numeric
+                END) AS mfn_postage_fee_calculado
+           FROM fallback_estimates
+        )
+ SELECT amazon_order_id,
+    seller_sku,
+    product_name,
+    NULL::timestamp with time zone AS posted_date,
+    purchase_date AS order_purchase_date,
+    order_status,
+    fulfillment_channel AS order_fulfillment_channel,
+    sales_channel,
+    account_id,
+    order_item_id,
+    quantity_ordered,
+    item_price_amount,
+    item_revenue,
+    (COALESCE(promotion_discount_amount, (0)::numeric) * (quantity_ordered)::numeric) AS promotion_discount,
+    cost_product,
+    cost_status,
+    (item_price_amount * (quantity_ordered)::numeric) AS principal,
+    (0)::numeric AS shipping_charge,
+    (est_tax_hist * (quantity_ordered)::numeric) AS tax,
+    (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric) AS fba_fee,
+    (COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric) AS commission,
+    (((COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric) + (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric)) + mfn_postage_fee_calculado) AS total_fees,
+    mfn_postage_fee_calculado AS mfn_postage_fee,
+    mfn_shipping_chargeback,
+    (0)::numeric AS total_service_fees,
+    (((((item_price_amount * (quantity_ordered)::numeric) + (COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric)) + (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric)) + mfn_postage_fee_calculado) - (COALESCE(promotion_discount_amount, (0)::numeric) * (quantity_ordered)::numeric)) AS net_revenue,
+    ((((((item_price_amount * (quantity_ordered)::numeric) + (COALESCE(referral_fee, est_commission_hist, (0)::numeric) * (quantity_ordered)::numeric)) + (COALESCE(fba_fulfillment_fee, est_fba_fee_hist, (0)::numeric) * (quantity_ordered)::numeric)) + mfn_postage_fee_calculado) - (COALESCE(promotion_discount_amount, (0)::numeric) * (quantity_ordered)::numeric)) - (COALESCE(cost_product, (0)::numeric) * (quantity_ordered)::numeric)) AS gross_profit,
+        CASE
+            WHEN (referral_fee IS NOT NULL) THEN 'sp_api'::text
+            ELSE 'historical'::text
+        END AS fee_source
+   FROM mfn_with_rule;"
