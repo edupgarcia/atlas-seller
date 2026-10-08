@@ -33,4 +33,5 @@ dist-ssr
 .env
 
 # Database
-supabase/
+.temp/
+data*.sql
